@@ -2,7 +2,7 @@ import express from 'express';
 import { supabase } from '../config/supabase.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
 import {
-  isValidName, isValidPhone, isValidAddress, isValidUUID, isValidStatus,
+  isValidName, isValidPhone, isValidAddress, isValidUUID, isValidStatus, isValidPrice,
   sanitize, validateIdParam
 } from '../middleware/validate.js';
 
@@ -54,10 +54,13 @@ router.get('/:id', authenticateToken, validateIdParam, async (req, res) => {
 
 router.post('/', authenticateToken, requireRole('employer', 'owner'), async (req, res) => {
   try {
-    const { client_name, phone, address, product_type_id, city_id } = req.body;
+    const { client_name, phone, address, product_type_id, city_id, total_price } = req.body;
 
     if (!client_name || !phone || !address || !product_type_id || !city_id) {
       return res.status(400).json({ error: 'All fields are required' });
+    }
+    if (total_price !== undefined && !isValidPrice(total_price)) {
+      return res.status(400).json({ error: 'Invalid price value' });
     }
     if (!isValidName(client_name)) {
       return res.status(400).json({ error: 'Client name must be 1-100 characters' });
@@ -89,6 +92,7 @@ router.post('/', authenticateToken, requireRole('employer', 'owner'), async (req
         product_type_id,
         city_id,
         employer_id: employerId,
+        total_price: total_price ? parseFloat(total_price) : 0,
         status: 'Pending'
       })
       .select()
@@ -111,7 +115,7 @@ router.post('/', authenticateToken, requireRole('employer', 'owner'), async (req
 
 router.put('/:id', authenticateToken, validateIdParam, async (req, res) => {
   try {
-    const { client_name, phone, address, product_type_id, city_id, assigned_driver_id, status, reason } = req.body;
+    const { client_name, phone, address, product_type_id, city_id, assigned_driver_id, status, reason, total_price } = req.body;
     const updates = {};
 
     if (client_name !== undefined) {
@@ -144,6 +148,10 @@ router.put('/:id', authenticateToken, validateIdParam, async (req, res) => {
     }
     if (reason !== undefined) {
       updates.reason = reason ? sanitize(reason) : reason;
+    }
+    if (total_price !== undefined) {
+      if (!isValidPrice(total_price)) return res.status(400).json({ error: 'Invalid price value' });
+      updates.total_price = parseFloat(total_price);
     }
 
     const { data: updated, error } = await supabase

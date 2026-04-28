@@ -41,6 +41,11 @@ export const isValidAddress = (str) =>
 export const isValidIdNumber = (str) =>
   typeof str === 'string' && str.trim().length >= 1 && str.trim().length <= 50;
 
+export const isValidPrice = (val) => {
+  const num = parseFloat(val);
+  return !isNaN(num) && num >= 0;
+};
+
 export const validateBase64Image = (base64String) => {
   if (!base64String || typeof base64String !== 'string') {
     return { valid: false, error: 'No image data provided' };
