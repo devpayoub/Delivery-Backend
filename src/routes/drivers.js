@@ -2,6 +2,10 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import { supabase, BUCKET_NAME } from '../config/supabase.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
+import {
+  isValidName, isValidPhone, isValidIdNumber, isValidPassword, isValidUUID,
+  sanitize, validateBase64Image, validateIdParam
+} from '../middleware/validate.js';
 
 const router = express.Router();
 
@@ -19,7 +23,7 @@ router.get('/', authenticateToken, requireRole('owner', 'employer'), async (req,
   }
 });
 
-router.get('/:id', authenticateToken, requireRole('owner', 'employer'), async (req, res) => {
+router.get('/:id', authenticateToken, requireRole('owner', 'employer'), validateIdParam, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('drivers')
@@ -41,11 +45,34 @@ router.post('/', authenticateToken, requireRole('owner'), async (req, res) => {
     if (!name || !phone || !id_number || !license_number || !password) {
       return res.status(400).json({ error: 'Name, phone, id_number, license_number and password are required' });
     }
+    if (!isValidName(name)) {
+      return res.status(400).json({ error: 'Name must be 1-100 characters' });
+    }
+    if (!isValidPhone(phone)) {
+      return res.status(400).json({ error: 'Invalid phone format (8-15 digits)' });
+    }
+    if (!isValidIdNumber(id_number)) {
+      return res.status(400).json({ error: 'ID number must be 1-50 characters' });
+    }
+    if (!isValidIdNumber(license_number)) {
+      return res.status(400).json({ error: 'License number must be 1-50 characters' });
+    }
+    if (city_id && !isValidUUID(city_id)) {
+      return res.status(400).json({ error: 'Invalid city ID format' });
+    }
+    if (!isValidPassword(password)) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    const cleanName = sanitize(name);
+    const cleanPhone = sanitize(phone);
+    const cleanIdNumber = sanitize(id_number);
+    const cleanLicense = sanitize(license_number);
 
     const { data: existing } = await supabase
       .from('drivers')
       .select('*')
-      .eq('phone', phone)
+      .eq('phone', cleanPhone)
       .single();
 
     if (existing) {
@@ -53,18 +80,20 @@ router.post('/', authenticateToken, requireRole('owner'), async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    
+
     let id_pic_url = null;
     let license_pic_url = null;
 
     if (req.body.id_pic_base64) {
-      const base64Data = req.body.id_pic_base64.replace(/^data:image\/\w+;base64,/, '');
-      const buffer = Buffer.from(base64Data, 'base64');
-      const fileName = `driver_${Date.now()}_id_pic.png`;
-      
+      const result = validateBase64Image(req.body.id_pic_base64);
+      if (!result.valid) {
+        return res.status(400).json({ error: `ID photo: ${result.error}` });
+      }
+      const fileName = `driver_${Date.now()}_id_pic.${result.ext}`;
+
       const { error: uploadError } = await supabase.storage
         .from(BUCKET_NAME)
-        .upload(fileName, buffer);
+        .upload(fileName, result.buffer);
 
       if (!uploadError) {
         const { data: urlData } = supabase.storage.from(BUCKET_NAME).getPublicUrl(fileName);
@@ -73,13 +102,15 @@ router.post('/', authenticateToken, requireRole('owner'), async (req, res) => {
     }
 
     if (req.body.license_pic_base64) {
-      const base64Data = req.body.license_pic_base64.replace(/^data:image\/\w+;base64,/, '');
-      const buffer = Buffer.from(base64Data, 'base64');
-      const fileName = `driver_${Date.now()}_license_pic.png`;
-      
+      const result = validateBase64Image(req.body.license_pic_base64);
+      if (!result.valid) {
+        return res.status(400).json({ error: `License photo: ${result.error}` });
+      }
+      const fileName = `driver_${Date.now()}_license_pic.${result.ext}`;
+
       const { error: uploadError } = await supabase.storage
         .from(BUCKET_NAME)
-        .upload(fileName, buffer);
+        .upload(fileName, result.buffer);
 
       if (!uploadError) {
         const { data: urlData } = supabase.storage.from(BUCKET_NAME).getPublicUrl(fileName);
@@ -90,11 +121,11 @@ router.post('/', authenticateToken, requireRole('owner'), async (req, res) => {
     const { data: newDriver, error } = await supabase
       .from('drivers')
       .insert({
-        name,
-        phone,
-        id_number,
+        name: cleanName,
+        phone: cleanPhone,
+        id_number: cleanIdNumber,
         id_pic: id_pic_url,
-        license_number,
+        license_number: cleanLicense,
         license_pic: license_pic_url,
         city_id: city_id || null,
         password: hashedPassword
@@ -117,26 +148,42 @@ router.post('/', authenticateToken, requireRole('owner'), async (req, res) => {
   }
 });
 
-router.put('/:id', authenticateToken, requireRole('owner', 'employer'), async (req, res) => {
+router.put('/:id', authenticateToken, requireRole('owner', 'employer'), validateIdParam, async (req, res) => {
   try {
     const { name, phone, id_number, license_number, city_id } = req.body;
     const updates = {};
-    if (name) updates.name = name;
-    if (phone) updates.phone = phone;
-    if (id_number) updates.id_number = id_number;
-    if (license_number) updates.license_number = license_number;
-    if (city_id !== undefined) updates.city_id = city_id || null;
 
-    console.log('Updating driver ID:', req.params.id, 'with updates:', updates);
+    if (name !== undefined) {
+      if (!isValidName(name)) return res.status(400).json({ error: 'Name must be 1-100 characters' });
+      updates.name = sanitize(name);
+    }
+    if (phone !== undefined) {
+      if (!isValidPhone(phone)) return res.status(400).json({ error: 'Invalid phone format (8-15 digits)' });
+      updates.phone = sanitize(phone);
+    }
+    if (id_number !== undefined) {
+      if (!isValidIdNumber(id_number)) return res.status(400).json({ error: 'ID number must be 1-50 characters' });
+      updates.id_number = sanitize(id_number);
+    }
+    if (license_number !== undefined) {
+      if (!isValidIdNumber(license_number)) return res.status(400).json({ error: 'License number must be 1-50 characters' });
+      updates.license_number = sanitize(license_number);
+    }
+    if (city_id !== undefined) {
+      if (city_id && !isValidUUID(city_id)) return res.status(400).json({ error: 'Invalid city ID format' });
+      updates.city_id = city_id || null;
+    }
 
     if (req.body.id_pic_base64) {
-      const base64Data = req.body.id_pic_base64.replace(/^data:image\/\w+;base64,/, '');
-      const buffer = Buffer.from(base64Data, 'base64');
-      const fileName = `driver_${Date.now()}_id_pic.png`;
-      
+      const result = validateBase64Image(req.body.id_pic_base64);
+      if (!result.valid) {
+        return res.status(400).json({ error: `ID photo: ${result.error}` });
+      }
+      const fileName = `driver_${Date.now()}_id_pic.${result.ext}`;
+
       const { error: uploadError } = await supabase.storage
         .from(BUCKET_NAME)
-        .upload(fileName, buffer);
+        .upload(fileName, result.buffer);
 
       if (!uploadError) {
         const { data: urlData } = supabase.storage.from(BUCKET_NAME).getPublicUrl(fileName);
@@ -145,13 +192,15 @@ router.put('/:id', authenticateToken, requireRole('owner', 'employer'), async (r
     }
 
     if (req.body.license_pic_base64) {
-      const base64Data = req.body.license_pic_base64.replace(/^data:image\/\w+;base64,/, '');
-      const buffer = Buffer.from(base64Data, 'base64');
-      const fileName = `driver_${Date.now()}_license_pic.png`;
-      
+      const result = validateBase64Image(req.body.license_pic_base64);
+      if (!result.valid) {
+        return res.status(400).json({ error: `License photo: ${result.error}` });
+      }
+      const fileName = `driver_${Date.now()}_license_pic.${result.ext}`;
+
       const { error: uploadError } = await supabase.storage
         .from(BUCKET_NAME)
-        .upload(fileName, buffer);
+        .upload(fileName, result.buffer);
 
       if (!uploadError) {
         const { data: urlData } = supabase.storage.from(BUCKET_NAME).getPublicUrl(fileName);
@@ -160,6 +209,9 @@ router.put('/:id', authenticateToken, requireRole('owner', 'employer'), async (r
     }
 
     if (req.body.password) {
+      if (!isValidPassword(req.body.password)) {
+        return res.status(400).json({ error: 'Password must be at least 8 characters' });
+      }
       updates.password = await bcrypt.hash(req.body.password, 10);
     }
 
@@ -184,7 +236,7 @@ router.put('/:id', authenticateToken, requireRole('owner', 'employer'), async (r
   }
 });
 
-router.delete('/:id', authenticateToken, requireRole('owner'), async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('owner'), validateIdParam, async (req, res) => {
   try {
     const { data: driver } = await supabase
       .from('drivers')

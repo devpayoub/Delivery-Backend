@@ -1,6 +1,7 @@
 import express from 'express';
 import { supabase } from '../config/supabase.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
+import { isValidName, sanitize, validateIdParam } from '../middleware/validate.js';
 
 const router = express.Router();
 
@@ -18,7 +19,7 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-router.get('/:id', authenticateToken, async (req, res) => {
+router.get('/:id', authenticateToken, validateIdParam, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('product_types')
@@ -40,10 +41,13 @@ router.post('/', authenticateToken, requireRole('owner'), async (req, res) => {
     if (!name) {
       return res.status(400).json({ error: 'Name is required' });
     }
+    if (!isValidName(name)) {
+      return res.status(400).json({ error: 'Name must be 1-100 characters' });
+    }
 
     const { data: newType, error } = await supabase
       .from('product_types')
-      .insert({ name })
+      .insert({ name: sanitize(name) })
       .select()
       .single();
 
@@ -61,13 +65,17 @@ router.post('/', authenticateToken, requireRole('owner'), async (req, res) => {
   }
 });
 
-router.put('/:id', authenticateToken, requireRole('owner'), async (req, res) => {
+router.put('/:id', authenticateToken, requireRole('owner'), validateIdParam, async (req, res) => {
   try {
     const { name } = req.body;
 
+    if (name !== undefined && !isValidName(name)) {
+      return res.status(400).json({ error: 'Name must be 1-100 characters' });
+    }
+
     const { data: updated, error } = await supabase
       .from('product_types')
-      .update({ name })
+      .update({ name: sanitize(name) })
       .eq('id', req.params.id)
       .select()
       .single();
@@ -86,7 +94,7 @@ router.put('/:id', authenticateToken, requireRole('owner'), async (req, res) => 
   }
 });
 
-router.delete('/:id', authenticateToken, requireRole('owner'), async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('owner'), validateIdParam, async (req, res) => {
   try {
     const { data: productType } = await supabase
       .from('product_types')

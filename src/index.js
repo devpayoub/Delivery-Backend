@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 
 import authRoutes from './routes/auth.js';
@@ -15,27 +16,16 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS middleware
 app.use(cors({
-  origin: '*',
+  origin: process.env.CORS_ORIGIN || 'http://localhost:3001',
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-  allowedHeaders: 'Content-Type,Authorization'
+  allowedHeaders: 'Content-Type,Authorization',
+  credentials: true
 }));
 
-// Debug middleware
-app.use((req, res, next) => {
-  console.log(`${req.method} ${req.path}`);
-  next();
-});
-
-app.use(express.json({ limit: '50mb', strict: false }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-// Debug test endpoint
-app.post('/api/test', (req, res) => {
-  console.log('Test body:', req.body);
-  res.json({ received: req.body });
-});
+app.use(cookieParser());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/employers', employerRoutes);
